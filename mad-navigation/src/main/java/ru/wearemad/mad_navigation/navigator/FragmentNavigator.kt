@@ -6,7 +6,7 @@ import androidx.fragment.app.Fragment
 import com.github.terrakok.cicerone.androidx.ActivityScreen
 import ru.wearemad.mad_navigation.commands.ExitWithFragmentResult
 
-class FragmentNavigator(
+open class FragmentNavigator(
     containerId: Int,
     private val fragment: Fragment,
 ) : BaseNavigator(

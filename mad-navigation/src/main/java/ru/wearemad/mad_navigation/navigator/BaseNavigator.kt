@@ -14,13 +14,12 @@ import com.github.terrakok.cicerone.Navigator
 import com.github.terrakok.cicerone.Replace
 import com.github.terrakok.cicerone.androidx.ActivityScreen
 import com.github.terrakok.cicerone.androidx.AppScreen
-import com.github.terrakok.cicerone.androidx.FragmentScreen
 import com.github.terrakok.cicerone.androidx.TransactionInfo
-import ru.wearemad.mad_navigation.route.FragmentRoute
 import ru.wearemad.mad_navigation.commands.AddScreenCommand
 import ru.wearemad.mad_navigation.commands.ExitWithFragmentResult
 import ru.wearemad.mad_navigation.commands.OpenDialogCommand
 import ru.wearemad.mad_navigation.commands.ReplaceTabCommand
+import ru.wearemad.mad_navigation.route.FragmentRoute
 
 abstract class BaseNavigator(
     private val fragmentManager: FragmentManager,
@@ -65,10 +64,8 @@ abstract class BaseNavigator(
 
     protected open fun forward(command: Forward) {
         when (val screen = command.screen as AppScreen) {
-            is ActivityScreen -> {
-                checkAndStartActivity(screen)
-            }
-            is FragmentScreen -> {
+            is ActivityScreen -> checkAndStartActivity(screen)
+            is FragmentRoute -> {
                 val type = if (command.clearContainer) TransactionInfo.Type.REPLACE else TransactionInfo.Type.ADD
                 commitNewFragmentScreen(screen, type, true)
             }
@@ -81,7 +78,7 @@ abstract class BaseNavigator(
                 checkAndStartActivity(screen)
                 activityBack()
             }
-            is FragmentScreen -> {
+            is FragmentRoute -> {
                 if (localStackCopy.isNotEmpty()) {
                     fragmentManager.popBackStack()
                     val removed = localStackCopy.removeAt(localStackCopy.lastIndex)
@@ -165,29 +162,32 @@ abstract class BaseNavigator(
 
 
     protected open fun commitNewFragmentScreen(
-        screen: FragmentScreen,
+        screen: FragmentRoute,
         type: TransactionInfo.Type,
         addToBackStack: Boolean
     ) {
         val fragment = screen.createFragment(fragmentFactory)
+
         val transaction = fragmentManager.beginTransaction()
         transaction.setReorderingAllowed(true)
-        if (screen is FragmentRoute) {
-            screen.animation?.let {
-                transaction
-                    .setCustomAnimations(
-                        it.enter,
-                        it.exit,
-                        it.popEnter,
-                        it.popExit
-                    )
-            }
-        }
+
         setupFragmentTransaction(
             transaction,
             fragmentManager.findFragmentById(containerId),
-            fragment
+            fragment,
+            screen
         )
+
+        screen.animation?.let {
+            transaction
+                .setCustomAnimations(
+                    it.enter,
+                    it.exit,
+                    it.popEnter,
+                    it.popExit
+                )
+        }
+
         when (type) {
             TransactionInfo.Type.ADD -> transaction.add(containerId, fragment, screen.screenKey)
             TransactionInfo.Type.REPLACE -> transaction.replace(containerId, fragment, screen.screenKey)
@@ -232,9 +232,24 @@ abstract class BaseNavigator(
     protected open fun setupFragmentTransaction(
         fragmentTransaction: FragmentTransaction,
         currentFragment: Fragment?,
-        nextFragment: Fragment?
+        nextFragment: Fragment?,
+        screen: FragmentRoute
     ) {
-        // Do nothing by default
+        val transitionInfo = screen.sharedTransitionInfo
+        if (transitionInfo.hasSharedElements.not()) {
+            return
+        }
+        screen.applySharedTransitionInfo(nextFragment)
+        fragmentTransaction.setReorderingAllowed(true)
+        transitionInfo
+            .elements
+            .forEach { pair ->
+                fragmentTransaction.addSharedElement(
+                    pair.first,
+                    pair.second
+                )
+            }
+        transitionInfo.clearResources()
     }
 
     /**
@@ -279,7 +294,17 @@ abstract class BaseNavigator(
     private fun addScreen(command: AddScreenCommand) {
         val screen = command.screen
         val newFragment = screen.createFragment(fragmentFactory)
+
         val fragmentTransaction = fragmentManager.beginTransaction()
+        fragmentTransaction.setReorderingAllowed(true)
+
+        setupFragmentTransaction(
+            fragmentTransaction,
+            fragmentManager.findFragmentById(containerId),
+            newFragment,
+            screen
+        )
+
         command.screen.animation?.let {
             fragmentTransaction
                 .setCustomAnimations(
